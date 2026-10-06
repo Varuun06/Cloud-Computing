@@ -1,0 +1,36 @@
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Python cache / build files
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime data created by the services (regenerated from seed.py on start)
+*/data/
+
+# Environment / secrets
+.env
+.env.*
+
+# Logs
+*.log
+
+# Node (if newman is installed locally to run the Postman collection)
+node_modules/
+newman/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+
+# OS files
+Thumbs.db
+desktop.ini
+.DS_Store

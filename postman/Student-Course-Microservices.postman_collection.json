@@ -1,0 +1,948 @@
+{
+  "info": {
+    "name": "Student & Course Microservices",
+    "description": "Cloud and Distributed Computing project - two independent REST microservices.\n\nStudent Service: http://localhost:8001  |  Course Service: http://localhost:8002\n\nEvery response carries an X-Service-Name header proving which service answered.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Student Service (port 8001)",
+      "description": "CRUD operations on the Student microservice. Works even if the Course Service is stopped.",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{student_url}}/health",
+              "host": [
+                "{{student_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Answered by student-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"student-service\"));",
+                  "pm.test(\"Service is UP\", () => pm.expect(pm.response.json().status).to.eql(\"UP\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get all students",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{student_url}}/api/students",
+              "host": [
+                "{{student_url}}"
+              ],
+              "path": [
+                "api",
+                "students"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Answered by student-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"student-service\"));",
+                  "pm.test(\"Has data array\", () => pm.expect(pm.response.json().data).to.be.an(\"array\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filter students (IT, 4th year)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{student_url}}/api/students?department=IT&year=4",
+              "host": [
+                "{{student_url}}"
+              ],
+              "path": [
+                "api",
+                "students"
+              ],
+              "query": [
+                {
+                  "key": "department",
+                  "value": "IT"
+                },
+                {
+                  "key": "year",
+                  "value": "4"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Answered by student-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"student-service\"));",
+                  "pm.test(\"All results are IT, year 4\", () => pm.response.json().data.forEach(s => {",
+                  "  pm.expect(s.department).to.eql(\"IT\"); pm.expect(s.year).to.eql(4); }));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create student",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{student_url}}/api/students",
+              "host": [
+                "{{student_url}}"
+              ],
+              "path": [
+                "api",
+                "students"
+              ]
+            },
+            "description": "Creates a student and stores its id in {{new_student_id}}. Run 'Delete student' before re-running, otherwise you get 409 Conflict for the duplicate register number.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"register_number\": \"312222205099\",\n  \"name\": \"Varuun K\",\n  \"email\": \"varuun2210@ssn.edu.in\",\n  \"department\": \"IT\",\n  \"year\": 4,\n  \"cgpa\": 8.7,\n  \"phone\": \"9876543210\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"Answered by student-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"student-service\"));",
+                  "const s = pm.response.json();",
+                  "pm.collectionVariables.set(\"new_student_id\", s.id);",
+                  "pm.test(\"Has generated id\", () => pm.expect(s.id).to.match(/^S\\d+$/));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get student by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{student_url}}/api/students/{{new_student_id}}",
+              "host": [
+                "{{student_url}}"
+              ],
+              "path": [
+                "api",
+                "students",
+                "{{new_student_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Answered by student-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"student-service\"));",
+                  "pm.test(\"Correct student\", () => pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get(\"new_student_id\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update student",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{student_url}}/api/students/{{new_student_id}}",
+              "host": [
+                "{{student_url}}"
+              ],
+              "path": [
+                "api",
+                "students",
+                "{{new_student_id}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cgpa\": 9.1,\n  \"phone\": \"9123456789\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Answered by student-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"student-service\"));",
+                  "pm.test(\"CGPA updated\", () => pm.expect(pm.response.json().cgpa).to.eql(9.1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create student - validation error (422)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{student_url}}/api/students",
+              "host": [
+                "{{student_url}}"
+              ],
+              "path": [
+                "api",
+                "students"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"register_number\": \"123\",\n  \"name\": \"\",\n  \"email\": \"not-an-email\",\n  \"department\": \"IT\",\n  \"year\": 7\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"Answered by student-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"student-service\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create student - duplicate (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{student_url}}/api/students",
+              "host": [
+                "{{student_url}}"
+              ],
+              "path": [
+                "api",
+                "students"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"register_number\": \"312222205001\",\n  \"name\": \"Duplicate\",\n  \"email\": \"dup@ssn.edu.in\",\n  \"department\": \"IT\",\n  \"year\": 4\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"Answered by student-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"student-service\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get student - not found (404)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{student_url}}/api/students/S9999",
+              "host": [
+                "{{student_url}}"
+              ],
+              "path": [
+                "api",
+                "students",
+                "S9999"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"Answered by student-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"student-service\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Course Service (port 8002)",
+      "description": "CRUD operations on the Course microservice. Works even if the Student Service is stopped.",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{course_url}}/health",
+              "host": [
+                "{{course_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Answered by course-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"course-service\"));",
+                  "pm.test(\"Service is UP\", () => pm.expect(pm.response.json().status).to.eql(\"UP\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get all courses",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{course_url}}/api/courses",
+              "host": [
+                "{{course_url}}"
+              ],
+              "path": [
+                "api",
+                "courses"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Answered by course-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"course-service\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filter courses (IT, semester 7)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{course_url}}/api/courses?department=IT&semester=7",
+              "host": [
+                "{{course_url}}"
+              ],
+              "path": [
+                "api",
+                "courses"
+              ],
+              "query": [
+                {
+                  "key": "department",
+                  "value": "IT"
+                },
+                {
+                  "key": "semester",
+                  "value": "7"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Answered by course-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"course-service\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create course",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{course_url}}/api/courses",
+              "host": [
+                "{{course_url}}"
+              ],
+              "path": [
+                "api",
+                "courses"
+              ]
+            },
+            "description": "Creates a course and stores its id in {{new_course_id}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"IT1705\",\n  \"title\": \"Internet of Things\",\n  \"credits\": 3,\n  \"department\": \"IT\",\n  \"semester\": 7,\n  \"instructor\": \"Dr. S. Meena\",\n  \"capacity\": 60\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"Answered by course-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"course-service\"));",
+                  "const c = pm.response.json();",
+                  "pm.collectionVariables.set(\"new_course_id\", c.id);",
+                  "pm.test(\"Starts with no enrollments\", () => pm.expect(c.enrolled_students).to.eql([]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get course by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{course_url}}/api/courses/{{new_course_id}}",
+              "host": [
+                "{{course_url}}"
+              ],
+              "path": [
+                "api",
+                "courses",
+                "{{new_course_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Answered by course-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"course-service\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update course",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{course_url}}/api/courses/{{new_course_id}}",
+              "host": [
+                "{{course_url}}"
+              ],
+              "path": [
+                "api",
+                "courses",
+                "{{new_course_id}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"instructor\": \"Dr. P. Kumar\",\n  \"capacity\": 40\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Answered by course-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"course-service\"));",
+                  "pm.test(\"Capacity updated\", () => pm.expect(pm.response.json().capacity).to.eql(40));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create course - validation error (422)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{course_url}}/api/courses",
+              "host": [
+                "{{course_url}}"
+              ],
+              "path": [
+                "api",
+                "courses"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"bad code\",\n  \"title\": \"X\",\n  \"credits\": 9,\n  \"department\": \"IT\",\n  \"semester\": 7,\n  \"instructor\": \"Y\",\n  \"capacity\": 10\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"Answered by course-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"course-service\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get course - not found (404)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{course_url}}/api/courses/C999",
+              "host": [
+                "{{course_url}}"
+              ],
+              "path": [
+                "api",
+                "courses",
+                "C999"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"Answered by course-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"course-service\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Enrollment (Course Service -> Student Service)",
+      "description": "Course Service calls the Student Service over REST to verify the student exists. Requires both services running. Stop the Student Service and run 'Enroll student' again to see 503.",
+      "item": [
+        {
+          "name": "Enroll student in course",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{course_url}}/api/courses/{{new_course_id}}/enrollments",
+              "host": [
+                "{{course_url}}"
+              ],
+              "path": [
+                "api",
+                "courses",
+                "{{new_course_id}}",
+                "enrollments"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"student_id\": \"{{new_student_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"Answered by course-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"course-service\"));",
+                  "pm.test(\"Student name fetched from Student Service\", () => pm.expect(pm.response.json().student_name).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List enrollments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{course_url}}/api/courses/{{new_course_id}}/enrollments",
+              "host": [
+                "{{course_url}}"
+              ],
+              "path": [
+                "api",
+                "courses",
+                "{{new_course_id}}",
+                "enrollments"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Answered by course-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"course-service\"));",
+                  "pm.test(\"Contains the new student\", () => pm.expect(pm.response.json().student_ids).to.include(pm.collectionVariables.get(\"new_student_id\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Enroll unknown student (404)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{course_url}}/api/courses/{{new_course_id}}/enrollments",
+              "host": [
+                "{{course_url}}"
+              ],
+              "path": [
+                "api",
+                "courses",
+                "{{new_course_id}}",
+                "enrollments"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"student_id\": \"S9999\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"Answered by course-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"course-service\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unenroll student",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{course_url}}/api/courses/{{new_course_id}}/enrollments/{{new_student_id}}",
+              "host": [
+                "{{course_url}}"
+              ],
+              "path": [
+                "api",
+                "courses",
+                "{{new_course_id}}",
+                "enrollments",
+                "{{new_student_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Answered by course-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"course-service\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Cleanup (Delete)",
+      "item": [
+        {
+          "name": "Delete course",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{course_url}}/api/courses/{{new_course_id}}",
+              "host": [
+                "{{course_url}}"
+              ],
+              "path": [
+                "api",
+                "courses",
+                "{{new_course_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Answered by course-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"course-service\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete student",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{student_url}}/api/students/{{new_student_id}}",
+              "host": [
+                "{{student_url}}"
+              ],
+              "path": [
+                "api",
+                "students",
+                "{{new_student_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Answered by student-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"student-service\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirm student deleted (404)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{student_url}}/api/students/{{new_student_id}}",
+              "host": [
+                "{{student_url}}"
+              ],
+              "path": [
+                "api",
+                "students",
+                "{{new_student_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"Answered by student-service\", () => pm.expect(pm.response.headers.get(\"X-Service-Name\")).to.eql(\"student-service\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "student_url",
+      "value": "http://localhost:8001"
+    },
+    {
+      "key": "course_url",
+      "value": "http://localhost:8002"
+    },
+    {
+      "key": "new_student_id",
+      "value": ""
+    },
+    {
+      "key": "new_course_id",
+      "value": ""
+    }
+  ]
+}

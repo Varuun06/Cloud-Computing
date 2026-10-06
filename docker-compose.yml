@@ -1,0 +1,23 @@
+# Optional: run both services as containers with `docker compose up --build`
+# Each service gets its own container and its own volume (database-per-service).
+services:
+  student-service:
+    build: ./student-service
+    ports:
+      - "8001:8001"
+    volumes:
+      - student-data:/service/data
+
+  course-service:
+    build: ./course-service
+    ports:
+      - "8002:8002"
+    environment:
+      # containers reach each other by service name on the compose network
+      STUDENT_SERVICE_URL: http://student-service:8001
+    volumes:
+      - course-data:/service/data
+
+volumes:
+  student-data:
+  course-data:
