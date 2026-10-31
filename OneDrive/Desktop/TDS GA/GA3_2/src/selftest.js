@@ -1,6 +1,6 @@
 // Offline smoke test: starts the server without an LLM key and checks validation/conflict paths.
 import { spawn } from "node:child_process";
-import { createHmac } from "node:crypto";
+import { generateKeyPairSync, sign as edSign } from "node:crypto";
 import { canon } from "./canon.js";
 
 const port = 3911;
@@ -17,18 +17,21 @@ let fail = 0;
 const ok = (n, c) => { console.log(c ? "PASS" : "FAIL", n); if (!c) fail++; };
 
 const ev = "e-" + Date.now();
-const body = { operation: "propose", evaluationId: ev, receiptKey: "k1", dossiers: [{ id: "a", text: "x" }, { id: "b", text: "y" }] };
-ok("dup ids 400", (await post({ ...body, evaluationId: "z", dossiers: [{ id: "a" }, { id: "a" }] })).s === 400);
+const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+const mk = id => ({ dossierId: id, partition: "stable_core", sources: [{ sourceId: "s", lines: [{ lineId: id + "-l1", text: "hi" }] }] });
+const body = { operation: "propose", evaluationId: ev, profile: "ga5-mailroom-action-gate/v2", receiptVerifier: { algorithm: "Ed25519", publicKeyJwk: publicKey.export({ format: "jwk" }) }, dossiers: [mk("a"), mk("b")] };
+ok("dup ids 400", (await post({ ...body, evaluationId: "z", dossiers: [mk("a"), mk("a")] })).s === 400);
 ok("bad op 400", (await post({ operation: "nope" })).s === 400);
 const p1 = await post(body);
 ok("propose 200", p1.s === 200 && p1.j.status === "awaiting_receipts");
 const p2 = await post(body);
 ok("replay identical", canon(p1.j) === canon(p2.j));
-ok("conflict 409", (await post({ ...body, dossiers: [{ id: "a", text: "changed" }, { id: "b", text: "y" }] })).s === 409);
-const sign = p => createHmac("sha256", "k1").update(canon({ evaluationId: ev, callId: p.callId, action: p.action, proposalDigest: p.proposalDigest, receiptId: "r-" + p.dossierId })).digest("hex");
-const bad = await post({ operation: "commit", evaluationId: ev, receipts: p1.j.proposals.map(p => ({ callId: p.callId, action: p.action, proposalDigest: p.proposalDigest, receiptId: "r", signature: "00" })) });
+ok("conflict 409", (await post({ ...body, dossiers: [{ ...mk("a"), objective: "changed" }, mk("b")] })).s === 409);
+const unsigned = p => ({ evaluationId: ev, callId: p.callId, action: p.action, receiptId: "r-" + p.dossierId });
+const sign = p => edSign(null, Buffer.from(canon(unsigned(p))), privateKey).toString("base64url");
+const bad = await post({ operation: "commit", evaluationId: ev, receipts: p1.j.proposals.map(p => ({ callId: p.callId, action: p.action, receiptId: "r", signature: "00" })) });
 ok("bad signature rejected", bad.s === 422);
-const good = { operation: "commit", evaluationId: ev, receipts: p1.j.proposals.map(p => ({ callId: p.callId, action: p.action, proposalDigest: p.proposalDigest, receiptId: "r-" + p.dossierId, signature: sign(p) })) };
+const good = { operation: "commit", evaluationId: ev, receipts: p1.j.proposals.map(p => ({ ...unsigned(p), signature: sign(p) })) };
 const c1 = await post(good);
 ok("commit completed", c1.s === 200 && c1.j.status === "completed");
 ok("commit replay", canon((await post(good)).j) === canon(c1.j));

@@ -1,5 +1,5 @@
 import http from "node:http";
-import { canon, fingerprint, dossierId, callIdFor, proposalDigest, verifyReceipt } from "./canon.js";
+import { canon, sha256, fingerprint, callIdFor, proposalDigest, verifyReceipt } from "./canon.js";
 import { decisions, evaluations, persist } from "./store.js";
 import { decide } from "./llm.js";
 
@@ -56,42 +56,66 @@ function clean(v, depth = 0) {
   return undefined;
 }
 
-function buildProposal(id, fp, raw) {
-  let action = raw && ACTIONS.has(raw.action) ? raw.action : null;
-  let evidence = Array.isArray(raw?.evidence) ? clean(raw.evidence).slice(0, 4) : [];
-  let target = isObj(raw?.target) ? clean(raw.target) : {};
-  let payload = isObj(raw?.payload) ? clean(raw.payload) : {};
-  let ok = !!action;
-  // Fail safe: outbound send requires cited evidence; otherwise route to a human.
-  if (!action || (action === "send_approved_notice" && !evidence.length)) {
-    action = "request_confirmation";
-    if (!ok) { target = {}; payload = {}; evidence = []; }
-  }
-  const p = { dossierId: id, callId: callIdFor(id, fp), action, target, payload, evidence };
-  p.proposalDigest = proposalDigest(p);
-  return { p, ok };
+const PROFILE = "ga5-mailroom-action-gate/v2";
+const ID_RE = /^[A-Za-z0-9._:-]{12,128}$/;
+
+function lineIdsOf(d) {
+  const ids = new Set();
+  for (const s of d.sources) for (const l of s.lines) ids.add(l.lineId);
+  return ids;
 }
 
-function findKey(body) {
-  for (const [k, v] of Object.entries(body)) if (/key|secret/i.test(k) && typeof v === "string") return v;
-  for (const [k, v] of Object.entries(body)) {
-    if (isObj(v)) for (const [k2, v2] of Object.entries(v)) if (/key/i.test(k2) && typeof v2 === "string") return v2;
+function validateDossiers(list) {
+  if (!Array.isArray(list) || !list.length || list.length > MAX_DOSSIERS) throw new HttpError(422, "dossiers must be a non-empty array");
+  const seen = new Set();
+  for (const d of list) {
+    if (!isObj(d) || typeof d.dossierId !== "string" || !d.dossierId) throw new HttpError(422, "dossierId required");
+    if (seen.has(d.dossierId)) throw new HttpError(400, "duplicate dossier id");
+    seen.add(d.dossierId);
+    if (!Array.isArray(d.sources)) throw new HttpError(422, "sources required");
+    const lines = new Set();
+    for (const s of d.sources) {
+      if (!isObj(s) || typeof s.sourceId !== "string" || !Array.isArray(s.lines)) throw new HttpError(422, "malformed source");
+      for (const l of s.lines) {
+        if (!isObj(l) || typeof l.lineId !== "string" || typeof l.text !== "string") throw new HttpError(422, "malformed line");
+        if (lines.has(l.lineId)) throw new HttpError(422, "duplicate lineId");
+        lines.add(l.lineId);
+      }
+    }
   }
-  return null;
+}
+
+function buildProposal(d, fp, raw) {
+  const id = d.dossierId;
+  const valid = lineIdsOf(d);
+  let action = raw && ACTIONS.has(raw.action) ? raw.action : null;
+  const ok = !!action;
+  let evidence = [...new Set((Array.isArray(raw?.evidence) ? raw.evidence : []).map(String))].filter(x => valid.has(x));
+  let target = null;
+  if (isObj(raw?.target) && typeof raw.target.kind === "string" && typeof raw.target.id === "string") {
+    target = { kind: raw.target.kind.slice(0, 60), id: raw.target.id.slice(0, 160) };
+  }
+  let payload = isObj(raw?.payload) ? clean(raw.payload) : {};
+  // Fail safe: outbound send needs cited evidence and a target; otherwise route to a human.
+  if (!action || (action === "send_approved_notice" && (!evidence.length || !target))) {
+    action = "request_confirmation";
+    if (!ok) { target = null; payload = {}; evidence = []; }
+  }
+  const p = { dossierId: id, callId: callIdFor(id, fp), action, target, payload, evidence };
+  return { p, ok };
 }
 
 async function propose(body, t0) {
   const evalId = body.evaluationId;
   if (typeof evalId !== "string" || !evalId || evalId.length > 200) throw new HttpError(400, "evaluationId required");
-  if (!Array.isArray(body.dossiers) || !body.dossiers.length || body.dossiers.length > MAX_DOSSIERS)
-    throw new HttpError(422, "dossiers must be a non-empty array");
-  const seen = new Set();
-  for (const d of body.dossiers) {
-    const id = isObj(d) ? dossierId(d) : undefined;
-    if (typeof id !== "string" || !id) throw new HttpError(422, "dossier id required");
-    if (seen.has(id)) throw new HttpError(400, "duplicate dossier id");
-    seen.add(id);
-  }
+  if (body.profile !== undefined && body.profile !== PROFILE) throw new HttpError(422, "unsupported profile");
+  const jwk = body.receiptVerifier?.publicKeyJwk;
+  if (!isObj(jwk) || jwk.kty !== "OKP" || jwk.crv !== "Ed25519" || typeof jwk.x !== "string")
+    throw new HttpError(422, "receiptVerifier.publicKeyJwk required");
+  if (body.allowedActions !== undefined && !(Array.isArray(body.allowedActions) && body.allowedActions.every(a => ACTIONS.has(a))))
+    throw new HttpError(422, "bad allowedActions");
+  validateDossiers(body.dossiers);
+
   const reqFp = fingerprint(body);
   const prior = evaluations[evalId];
   if (prior) {
@@ -99,24 +123,26 @@ async function propose(body, t0) {
     return prior.response;
   }
 
-  const items = body.dossiers.map(d => ({ d, id: dossierId(d), fp: fingerprint(d) }));
+  const items = body.dossiers.map(d => ({ d, id: d.dossierId, fp: fingerprint(d) }));
   const todo = items.filter(i => !decisions[i.id + "|" + i.fp]);
   let fresh = new Map();
-  if (todo.length) fresh = await decide(todo.map(i => ({ ...i.d, id: i.id })), t0 + 50000);
+  if (todo.length) fresh = await decide(todo.map(i => i.d), t0 + 50000);
 
   const proposals = [];
   for (const i of items) {
     const key = i.id + "|" + i.fp;
     let p = decisions[key];
     if (!p) {
-      const { p: built, ok } = buildProposal(i.id, i.fp, fresh.get(i.id));
+      const { p: built, ok } = buildProposal(i.d, i.fp, fresh.get(i.id));
       p = built;
       if (ok) decisions[key] = p; // only cache real model decisions
     }
     proposals.push(p);
   }
-  const response = { status: "awaiting_receipts", evaluationId: evalId, proposals };
-  evaluations[evalId] = { requestFp: reqFp, key: findKey(body), proposals, response, commitFp: null, commitResponse: null };
+  const digests = Object.fromEntries(proposals.map(p => [p.callId, proposalDigest(p)]));
+  const response = { profile: PROFILE, evaluationId: evalId, status: "awaiting_receipts",
+    inputDigest: sha256(canon(body.dossiers)), proposals };
+  evaluations[evalId] = { requestFp: reqFp, key: jwk, proposals, digests, response, commitFp: null, commitResponse: null };
   persist();
   return response;
 }
@@ -143,15 +169,16 @@ function commit(body) {
     if (!p) throw new HttpError(422, "unknown callId");
     if (done.has(p.callId)) throw new HttpError(422, "duplicate receipt");
     if (r.action !== undefined && r.action !== p.action) throw new HttpError(422, "action mismatch");
+    const pd = ev.digests[p.callId];
     const dg = r.proposalDigest ?? r.digest;
-    if (dg !== undefined && dg !== p.proposalDigest) throw new HttpError(422, "digest mismatch");
-    if (!verifyReceipt(ev.key, r, evalId, p)) throw new HttpError(422, "invalid receipt signature");
+    if (dg !== undefined && dg !== pd) throw new HttpError(422, "digest mismatch");
+    if (!verifyReceipt(ev.key, r, evalId, { ...p, proposalDigest: pd })) throw new HttpError(422, "invalid receipt signature");
     done.add(p.callId);
     outcomes.push({ dossierId: p.dossierId, callId: p.callId, action: p.action, status: "completed",
       receiptId: r.receiptId ?? r.receipt ?? r.id ?? null });
   }
-  const response = { status: done.size === ev.proposals.length ? "completed" : "partial",
-    evaluationId: evalId, outcomes };
+  const response = { profile: PROFILE, evaluationId: evalId,
+    status: done.size === ev.proposals.length ? "completed" : "partial", outcomes };
   ev.commitFp = cfp; ev.commitResponse = response;
   persist();
   return response;

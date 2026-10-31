@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createPublicKey, verify } from "node:crypto";
 
 export function canon(v) {
   if (v === null || typeof v !== "object") return JSON.stringify(v);
@@ -8,39 +8,37 @@ export function canon(v) {
 }
 export const sha256 = s => createHash("sha256").update(s).digest("hex");
 export const fingerprint = d => sha256(canon(d));
-export const dossierId = d => d.dossierId ?? d.id ?? d.dossier_id;
+export const dossierId = d => d.dossierId;
 export const callIdFor = (id, fp) => "call_" + sha256(id + ":" + fp).slice(0, 24);
-export const proposalDigest = p => {
-  const { proposalDigest: _a, digest: _b, ...rest } = p;
-  return sha256(canon(rest));
-};
+export const proposalDigest = p => sha256(canon(p));
 
-function safeEq(a, b) {
-  const x = Buffer.from(String(a)), y = Buffer.from(String(b));
-  return x.length === y.length && timingSafeEqual(x, y);
-}
+const NL = String.fromCharCode(10);
+const fromB64u = x => Buffer.from(String(x), "base64url");
 
-// Verifies the receipt signature as HMAC-SHA256 (hex/base64/base64url) using the
-// evaluation's stored key, over several plausible canonical messages. Fails closed.
-export function verifyReceipt(key, r, evaluationId, proposal) {
-  const sig = r.signature ?? r.sig ?? r.mac ?? r.receiptSignature;
-  if (!key || typeof sig !== "string" || !sig) return false;
+// Ed25519 receipt check against the evaluation's public JWK. The signed message
+// layout is not documented, so several plausible layouts are tried. Fails closed.
+export function verifyReceipt(jwk, r, evaluationId, proposal) {
+  const sig = r.signature ?? r.sig ?? r.receiptSignature;
+  if (!jwk || typeof sig !== "string" || !sig) return false;
+  let pub;
+  try { pub = createPublicKey({ key: jwk, format: "jwk" }); } catch { return false; }
   const token = r.receiptId ?? r.receipt ?? r.id ?? r.nonce;
   const base = { evaluationId, callId: proposal.callId, action: proposal.action,
-    proposalDigest: proposal.proposalDigest };
-  const parts = [evaluationId, proposal.callId, proposal.action, proposal.proposalDigest, token ?? ""];
+    proposalDigest: proposal.proposalDigest, dossierId: proposal.dossierId };
+  const { signature: _s, sig: _g, receiptSignature: _r, ...unsigned } = r;
+  const parts = [evaluationId, proposal.callId, proposal.action, proposal.proposalDigest];
   const msgs = [
-    canon({ ...base, ...(token !== undefined ? { receiptId: token } : {}) }),
-    canon(base),
-    parts.join("."), parts.join(":"), parts.join("|"),
-    [evaluationId, proposal.callId, proposal.proposalDigest, token ?? ""].join("."),
-    [proposal.callId, proposal.proposalDigest, token ?? ""].join("."),
-    canon({ ...base, receipt: token }),
-    canon({ ...r, signature: undefined, sig: undefined, mac: undefined, receiptSignature: undefined }),
+    canon(unsigned), JSON.stringify(unsigned),
+    canon(r.payload ?? r.body ?? {}),
+    canon({ ...base, ...(token !== undefined ? { receiptId: token } : {}) }), canon(base),
+    parts.join("."), parts.join(":"), parts.join("|"), parts.join(NL),
+    [...parts, token ?? ""].join("."), [...parts, token ?? ""].join(":"),
+    [...parts, token ?? ""].join("|"), [...parts, token ?? ""].join(NL),
+    proposal.proposalDigest, proposal.callId,
   ];
-  for (const m of msgs) {
-    const mac = enc => createHmac("sha256", key).update(m).digest(enc);
-    if (safeEq(sig, mac("hex")) || safeEq(sig, mac("base64")) || safeEq(sig, mac("base64url"))) return true;
+  const sigs = [fromB64u(sig), Buffer.from(sig, "hex")];
+  for (const m of msgs) for (const sg of sigs) {
+    try { if (sg.length === 64 && verify(null, Buffer.from(m), pub, sg)) return true; } catch {}
   }
   return false;
 }
