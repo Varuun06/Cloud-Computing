@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: mailroom-agent
+    runtime: node
+    plan: free
+    buildCommand: "true"
+    startCommand: node src/server.js
+    healthCheckPath: /health
+    envVars:
+      - key: LLM_BASE_URL
+        value: https://generativelanguage.googleapis.com/v1beta/openai
+      - key: LLM_MODEL
+        value: gemini-2.0-flash
+      - key: LLM_API_KEY
+        sync: false
