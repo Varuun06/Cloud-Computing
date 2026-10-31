@@ -1,7 +1,7 @@
 // Offline smoke test: starts the server without an LLM key and checks validation/conflict paths.
 import { spawn } from "node:child_process";
 import { generateKeyPairSync, sign as edSign } from "node:crypto";
-import { canon } from "./canon.js";
+import { canon, proposalDigest } from "./canon.js";
 
 const port = 3911;
 const srv = spawn(process.execPath, ["src/server.js"], {
@@ -27,13 +27,17 @@ ok("propose 200", p1.s === 200 && p1.j.status === "awaiting_receipts");
 const p2 = await post(body);
 ok("replay identical", canon(p1.j) === canon(p2.j));
 ok("conflict 409", (await post({ ...body, dossiers: [{ ...mk("a"), objective: "changed" }, mk("b")] })).s === 409);
-const unsigned = p => ({ evaluationId: ev, callId: p.callId, action: p.action, receiptId: "r-" + p.dossierId });
-const sign = p => edSign(null, Buffer.from(canon(unsigned(p))), privateKey).toString("base64url");
-const bad = await post({ operation: "commit", evaluationId: ev, receipts: p1.j.proposals.map(p => ({ callId: p.callId, action: p.action, receiptId: "r", signature: "00" })) });
+const inputDigest = p1.j.inputDigest;
+const dg = p => proposalDigest(p);
+const mkR = (p, acc) => ({ dossierId: p.dossierId, callId: p.callId, action: p.action, accepted: acc, proposalDigest: dg(p), receiptId: "r-" + p.dossierId });
+const signR = r => edSign(null, Buffer.from(canon({ profile: "ga5-mailroom-action-gate/v2", evaluationId: ev, inputDigest, receipt: r })), privateKey).toString("base64");
+const withSig = (p, acc) => { const r = mkR(p, acc); return { ...r, receiptSignature: signR(r) }; };
+const env = rs => ({ profile: "ga5-mailroom-action-gate/v2", operation: "commit", evaluationId: ev, inputDigest, receipts: rs });
+const bad = await post(env(p1.j.proposals.map(p => ({ ...mkR(p, true), receiptSignature: "AAAA" }))));
 ok("bad signature rejected", bad.s === 422);
-const good = { operation: "commit", evaluationId: ev, receipts: p1.j.proposals.map(p => ({ ...unsigned(p), signature: sign(p) })) };
+const good = env(p1.j.proposals.map((p, i) => withSig(p, i === 0)));
 const c1 = await post(good);
-ok("commit completed", c1.s === 200 && c1.j.status === "completed");
+ok("commit completed", c1.s === 200 && c1.j.status === "completed" && c1.j.outcomes[0].status === "executed" && c1.j.outcomes[1].status === "rejected");
 ok("commit replay", canon((await post(good)).j) === canon(c1.j));
 ok("unknown eval rejected", (await post({ ...good, evaluationId: "nope" })).s >= 400);
 srv.kill();

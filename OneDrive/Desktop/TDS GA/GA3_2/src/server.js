@@ -85,15 +85,33 @@ function validateDossiers(list) {
   }
 }
 
+const K = (o, keys) => Object.fromEntries(keys.filter(k => o[k] !== undefined).map(k => [k, o[k]]));
+// Frozen target/payload shapes per action; constants are forced by code, not the model.
+function shape(action, target, payload) {
+  const t = (kind, id) => ({ kind, id });
+  switch (action) {
+    case "create_draft": return [t("draft_queue", target?.id), { ...K(payload, ["recipient", "referenceId", "status"]), template: "order_status" }];
+    case "update_internal_record": return [t("case_record", target?.id), K(payload, ["field", "sourceEventId", "value"])];
+    case "send_approved_notice": return [t("email", target?.id), { ...K(payload, ["referenceId", "status"]), template: "approved_delivery_notice" }];
+    case "request_confirmation": return [t("approval_queue", target?.id), { ...K(payload, ["claimedSender", "referenceId"]), questionCode: "VERIFY_REQUEST" }];
+    case "quarantine_item": return [t("security_queue", "mailroom"), { ...K(payload, ["artifactId"]), reasonCode: "INDIRECT_PROMPT_INJECTION" }];
+    default: {
+      const rc = ["ALREADY_COMPLETED", "DUPLICATE", "INFORMATIONAL"].includes(payload.reasonCode) ? payload.reasonCode : "INFORMATIONAL";
+      return [null, { reasonCode: rc, ...K(payload, ["referenceId"]) }];
+    }
+  }
+}
+
 function buildProposal(d, fp, raw) {
   const id = d.dossierId;
   const valid = lineIdsOf(d);
   let action = raw && ACTIONS.has(raw.action) ? raw.action : null;
   const ok = !!action;
+  let ok2 = true;
   let evidence = [...new Set((Array.isArray(raw?.evidence) ? raw.evidence : []).map(String))].filter(x => valid.has(x));
   let target = null;
-  if (isObj(raw?.target) && typeof raw.target.kind === "string" && typeof raw.target.id === "string") {
-    target = { kind: raw.target.kind.slice(0, 60), id: raw.target.id.slice(0, 160) };
+  if (isObj(raw?.target) && typeof raw.target.id === "string") {
+    target = { kind: String(raw.target.kind ?? "").slice(0, 60), id: raw.target.id.slice(0, 160) };
   }
   let payload = isObj(raw?.payload) ? clean(raw.payload) : {};
   // Fail safe: outbound send needs cited evidence and a target; otherwise route to a human.
@@ -101,8 +119,10 @@ function buildProposal(d, fp, raw) {
     action = "request_confirmation";
     if (!ok) { target = null; payload = {}; evidence = []; }
   }
-  const p = { dossierId: id, callId: callIdFor(id, fp), action, target, payload, evidence };
-  return { p, ok };
+  [target, payload] = shape(action, target, payload);
+  if (target && typeof target.id !== "string") { action = "request_confirmation"; ok2 = false; [target, payload] = shape(action, null, {}); }
+  const p = { dossierId: id, callId: callIdFor(id, fp), action, target, payload, evidence: evidence.sort() };
+  return { p, ok: ok && ok2 };
 }
 
 async function propose(body, t0) {
@@ -148,13 +168,14 @@ async function propose(body, t0) {
 }
 
 function commit(body) {
+  if (body.profile !== PROFILE) throw new HttpError(422, "unsupported profile");
+  const evalId = body.evaluationId;
+  if (typeof evalId !== "string" || !evalId) throw new HttpError(422, "evaluationId required");
   if (!Array.isArray(body.receipts) || !body.receipts.length || body.receipts.length > MAX_DOSSIERS)
     throw new HttpError(422, "receipts must be a non-empty array");
-  for (const r of body.receipts) if (!isObj(r)) throw new HttpError(422, "malformed receipt");
-  const evalId = body.evaluationId ?? body.receipts[0].evaluationId;
-  if (typeof evalId !== "string") throw new HttpError(422, "evaluationId required");
   const ev = evaluations[evalId];
   if (!ev) throw new HttpError(404, "unknown evaluation");
+  if (body.inputDigest !== ev.response.inputDigest) throw new HttpError(422, "inputDigest mismatch");
   const cfp = fingerprint(body);
   if (ev.commitFp) {
     if (ev.commitFp === cfp) return ev.commitResponse;
@@ -164,22 +185,21 @@ function commit(body) {
   const done = new Set();
   const outcomes = [];
   for (const r of body.receipts) {
-    if ((r.evaluationId ?? evalId) !== evalId) throw new HttpError(422, "receipt evaluation mismatch");
+    if (!isObj(r) || typeof r.accepted !== "boolean" || typeof r.receiptId !== "string") throw new HttpError(422, "malformed receipt");
     const p = byCall.get(r.callId);
     if (!p) throw new HttpError(422, "unknown callId");
     if (done.has(p.callId)) throw new HttpError(422, "duplicate receipt");
-    if (r.action !== undefined && r.action !== p.action) throw new HttpError(422, "action mismatch");
-    const pd = ev.digests[p.callId];
-    const dg = r.proposalDigest ?? r.digest;
-    if (dg !== undefined && dg !== pd) throw new HttpError(422, "digest mismatch");
-    if (!verifyReceipt(ev.key, r, evalId, { ...p, proposalDigest: pd })) throw new HttpError(422, "invalid receipt signature");
+    if (r.dossierId !== p.dossierId || r.action !== p.action) throw new HttpError(422, "receipt does not match proposal");
+    if (r.proposalDigest !== ev.digests[p.callId]) throw new HttpError(422, "digest mismatch");
+    if (!verifyReceipt(ev.key, r, PROFILE, evalId, ev.response.inputDigest)) throw new HttpError(422, "invalid receipt signature");
     done.add(p.callId);
-    outcomes.push({ dossierId: p.dossierId, callId: p.callId, action: p.action, status: "completed",
-      receiptId: r.receiptId ?? r.receipt ?? r.id ?? null });
+    outcomes.push({ dossierId: p.dossierId, callId: p.callId, action: p.action,
+      proposalDigest: r.proposalDigest, receiptId: r.receiptId, status: r.accepted === true ? "executed" : "rejected" });
   }
-  const response = { profile: PROFILE, evaluationId: evalId,
-    status: done.size === ev.proposals.length ? "completed" : "partial", outcomes };
-  ev.commitFp = cfp; ev.commitResponse = response;
+  if (done.size !== ev.proposals.length) throw new HttpError(422, "a receipt is required for every proposal");
+  const response = { profile: PROFILE, evaluationId: evalId, status: "completed",
+    inputDigest: ev.response.inputDigest, outcomes };
+  ev.commitFp = cfp; ev.commitResponse = response; ev.receipts = body.receipts;
   persist();
   return response;
 }
