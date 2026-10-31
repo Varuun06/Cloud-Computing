@@ -1,6 +1,6 @@
 import http from "node:http";
 import { canon, sha256, fingerprint, callIdFor, proposalDigest, verifyReceipt } from "./canon.js";
-import { decisions, evaluations, persist } from "./store.js";
+import { decisions, evaluations, persist, init } from "./store.js";
 import { decide } from "./llm.js";
 
 const PORT = +(process.env.PORT || 3000);
@@ -163,11 +163,11 @@ async function propose(body, t0) {
   const response = { profile: PROFILE, evaluationId: evalId, status: "awaiting_receipts",
     inputDigest: sha256(canon(body.dossiers)), proposals };
   evaluations[evalId] = { requestFp: reqFp, key: jwk, proposals, digests, response, commitFp: null, commitResponse: null };
-  persist();
+  await persist(evalId);
   return response;
 }
 
-function commit(body) {
+async function commit(body) {
   if (body.profile !== PROFILE) throw new HttpError(422, "unsupported profile");
   const evalId = body.evaluationId;
   if (typeof evalId !== "string" || !evalId) throw new HttpError(422, "evaluationId required");
@@ -200,7 +200,7 @@ function commit(body) {
   const response = { profile: PROFILE, evaluationId: evalId, status: "completed",
     inputDigest: ev.response.inputDigest, outcomes };
   ev.commitFp = cfp; ev.commitResponse = response; ev.receipts = body.receipts;
-  persist();
+  await persist(evalId);
   return response;
 }
 
@@ -247,4 +247,5 @@ const server = http.createServer(async (req, res) => {
   }
 });
 server.requestTimeout = 60000;
+await init();
 server.listen(PORT, () => console.log("mailroom agent listening on " + PORT));

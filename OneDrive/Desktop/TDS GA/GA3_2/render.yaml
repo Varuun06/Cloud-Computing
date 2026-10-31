@@ -13,3 +13,7 @@ services:
         value: gemini-3.5-flash
       - key: LLM_API_KEY
         sync: false
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
